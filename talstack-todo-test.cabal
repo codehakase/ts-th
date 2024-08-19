@@ -25,7 +25,9 @@ source-repository head
 
 library
   exposed-modules:
-      Lib
+      Lib,
+      DB,
+      TodoApp
   other-modules:
       Paths_talstack_todo_test
   autogen-modules:

@@ -1,90 +1,74 @@
--- {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 
--- import Test.Hspec
--- import Test.Hspec.Wai
--- import Test.Hspec.Wai.JSON
--- import Network.Wai.Test (defaultRequest)
--- import Network.HTTP.Types.Method (methodGet, methodPost, methodPatch, methodDelete)
--- import Control.Monad.IO.Class (liftIO)
--- import Data.Aeson (encode, object, (.=))
--- import Control.Concurrent.MVar (newMVar, readMVar, modifyMVar_, MVar)
--- import Web.Scotty
+import Test.HUnit
+import qualified Data.Text as T
+import Network.HTTP.Simple
+import Network.HTTP.Types (Method, methodGet, methodPost, methodPatch, methodDelete)
+import Data.List (isInfixOf)
+import Data.Aeson (encode, object, (.=))
+import Control.Exception (bracket)
+import Database.PostgreSQL.Simple
+import Data.Text (pack)
+import Data.Text.Encoding (encodeUtf8)
+import qualified Data.ByteString.Lazy.Char8 as BL8
 
--- -- Mock Todo type
--- data Todo = Todo
---   { todoId      :: Int
---   , title       :: String
---   , completed   :: Bool
---   } deriving (Show, Eq)
+baseUrl :: String
+baseUrl = "http://localhost:3000"
 
--- -- Mock database operations
--- type MockDB = MVar [Todo]
+-- Function to set up the database connection
+setupDB :: IO Connection
+setupDB = do
+    conn <- connectPostgreSQL "postgresql://user:password@localhost:5432/todoapp" 
+    execute_ conn "CREATE TABLE IF NOT EXISTS todos (id SERIAL PRIMARY KEY, title TEXT NOT NULL, completed BOOLEAN NOT NULL DEFAULT FALSE)"
+    return conn
 
--- mockGetTodos :: MockDB -> IO [Todo]
--- mockGetTodos mvar = readMVar mvar
+-- Function to tear down the database
+teardownDB :: Connection -> IO ()
+teardownDB conn = do
+    execute_ conn "DROP TABLE IF EXISTS todos"
+    close conn
 
--- mockAddTodo :: MockDB -> String -> IO ()
--- mockAddTodo mvar title = modifyMVar_ mvar $ \todos -> return (todos ++ [Todo (length todos + 1) title False])
+-- Helper to create a request
+createRequest :: Method -> String -> Request
+createRequest method path = setRequestMethod method
+                          $ setRequestPath (encodeUtf8 $ pack path)
+                          $ setRequestHost "localhost"
+                          $ setRequestPort 3000
+                          $ defaultRequest
 
--- mockUpdateTodo :: MockDB -> Int -> IO ()
--- mockUpdateTodo mvar id = modifyMVar_ mvar $ \todos -> return (map (\t -> if todoId t == id then t { completed = not (completed t) } else t) todos)
+main :: IO ()
+main = bracket setupDB teardownDB $ \conn -> do
+    _ <- runTestTT tests
+    return ()
 
--- mockDeleteTodo :: MockDB -> Int -> IO ()
--- mockDeleteTodo mvar id = modifyMVar_ mvar $ \todos -> return (filter (\t -> todoId t /= id) todos)
+tests :: Test
+tests = TestList
+    [ TestLabel "GET /todos returns an empty list" $ TestCase $ do
+        let request = createRequest methodGet "/todos"
+        response <- httpLBS request
+        assertEqual "Status code should be 200" 200 (getResponseStatusCode response)
+        assertEqual "Response should be an empty list" "[ ]" (getResponseBody response)
 
--- -- Create a Scotty application with a mock database
--- app :: MockDB -> Scotty ()
--- app db = do
---     get "/todos" $ do
---         todos <- liftIO $ mockGetTodos db
---         json todos
+    , TestLabel "POST /todos adds a todo" $ TestCase $ do
+        let requestBody = encode $ object ["title" .= ("New Todo" :: String)]
+        let request = setRequestBodyLBS requestBody $ createRequest methodPost "/todos"
+        response <- httpLBS request
+        assertEqual "Status code should be 200" 200 (getResponseStatusCode response)
 
---     post "/todos" $ do
---         titleParam <- param "title"
---         liftIO $ mockAddTodo db titleParam
---         todos <- liftIO $ mockGetTodos db
---         json todos
+    , TestLabel "GET /todos returns the added todo" $ TestCase $ do
+        let request = createRequest methodGet "/todos"
+        response <- httpLBS request
+        assertEqual "Status code should be 200" 200 (getResponseStatusCode response)
+        assertBool "Response should contain the added todo" ("New Todo" `isInfixOf` (BL8.unpack $ getResponseBody response))
 
---     patch "/todos/:id" $ do
---         todoIdParam <- param "id"
---         liftIO $ mockUpdateTodo db todoIdParam
---         todos <- liftIO $ mockGetTodos db
---         json todos
+    , TestLabel "PATCH /todos/:id updates a todo" $ TestCase $ do
+        let requestBody = encode $ object []  
+        let request = setRequestBodyLBS requestBody $ createRequest methodPatch "/todos/1"
+        response <- httpLBS request
+        assertEqual "Status code should be 200" 200 (getResponseStatusCode response)
 
---     delete "/todos/:id" $ do
---         todoIdParam <- param "id"
---         liftIO $ mockDeleteTodo db todoIdParam
---         todos <- liftIO $ mockGetTodos db
---         json todos
-
--- main :: IO ()
--- main = hspec $ do
---     describe "Todo API" $ do
---         it "returns todos" $ do
---             todosVar <- newMVar [Todo 1 "Mock Todo 1" False, Todo 2 "Mock Todo 2" True]
---             let testApp = app todosVar
---             response <- runWaiSession (HTTP.Wai.request methodGet "/todos" defaultRequest) testApp
---             response `shouldRespondWith` 200
---             response `shouldRespondWith` (encode [Todo 1 "Mock Todo 1" False, Todo 2 "Mock Todo 2" True])
-
---         it "adds a todo" $ do
---             todosVar <- newMVar []
---             let testApp = app todosVar
---             HTTP.Wai.request methodPost "/todos" (encode $ object ["title" .= ("New Todo" :: String)]) `shouldRespondWith` 200
---             todos <- mockGetTodos todosVar
---             length todos `shouldBe` 1
---             (title (head todos)) `shouldBe` "New Todo"
-
---         it "updates a todo" $ do
---             todosVar <- newMVar [Todo 1 "Mock Todo 1" False]
---             let testApp = app todosVar
---             HTTP.Wai.request methodPatch "/todos/1" defaultRequest `shouldRespondWith` 200
---             todos <- mockGetTodos todosVar
---             (completed (head todos)) `shouldBe` True
-
---         it "deletes a todo" $ do
---             todosVar <- newMVar [Todo 1 "Mock Todo 1" False]
---             let testApp = app todosVar
---             HTTP.Wai.request methodDelete "/todos/1" defaultRequest `shouldRespondWith` 200
---             todos <- mockGetTodos todosVar
---             length todos `shouldBe` 0
+    , TestLabel "DELETE /todos/:id deletes a todo" $ TestCase $ do
+        let request = createRequest methodDelete "/todos/1"
+        response <- httpLBS request
+        assertEqual "Status code should be 204" 204 (getResponseStatusCode response)
+    ]
