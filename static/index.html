@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todos App</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+</head>
+<body>
+    <div class="max-w-md mx-auto mt-10 p-4 bg-white rounded-lg shadow-lg">
+        <h1>Todos APP</h1>
+    <form hx-post="/todos" hx-target="#todo-list" hx-swap="innterHTML" class="flex items-center mb-4">
+          <input 
+            type="text" 
+            name="title"
+            placeholder="Add a new todo"
+            class="flex-grow p-2 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+          <button 
+            type="submit" 
+            class="bg-blue-500 text-white p-2 rounded-r-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Add
+          </button>
+    </form>
+        <ul id="todo-list" hx-get="/todos" hx-trigger="load" class="space-y-4">
+        </ul>
+    </div>
+</body>
+</html>
